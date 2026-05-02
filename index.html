@@ -962,20 +962,41 @@ function playHinoBahia() {
 
 // ── Melodia de decepção ──────────────────────────────────────
 // Toca ao perder o jogo (todas as 6 tentativas erradas).
-// Mesma abordagem do playHinoBahia: arquivo WAV embutido em base64,
-// reproduzido via elemento <audio> — funciona em todos os browsers.
+// Toca o WAV via elemento <audio>. Para qualquer outro áudio antes
+// e usa um pequeno delay para garantir que o AudioContext de outros
+// sons não interfira.
 function playDecepcao() {
   if (!soundOn) return;
-  try {
-    const audio = document.getElementById('loseAudio');
-    if (!audio) return;
-    audio.currentTime = 0;
-    audio.volume = 0.85;
-    const p = audio.play();
-    if (p && p.catch) p.catch(err => console.warn('audio play:', err));
-  } catch(e) {
-    console.warn('playDecepcao:', e);
-  }
+  // Pequeno delay para deixar tone('bad') e playKidVoice terminarem
+  setTimeout(() => {
+    try {
+      const audio = document.getElementById('loseAudio');
+      if (!audio) {
+        console.warn('loseAudio element not found');
+        return;
+      }
+      // Para o áudio de vitória se estiver tocando
+      const winAudio = document.getElementById('winAudio');
+      if (winAudio) { try { winAudio.pause(); winAudio.currentTime = 0; } catch(e){} }
+
+      audio.pause();
+      audio.currentTime = 0;
+      audio.volume = 0.9;
+      audio.muted = false;
+
+      const p = audio.play();
+      if (p && p.then) {
+        p.then(() => console.log('decepcao playing'))
+         .catch(err => {
+           console.warn('decepcao play error:', err);
+           // Tentar de novo após interação
+           setTimeout(() => { try { audio.play(); } catch(e){} }, 50);
+         });
+      }
+    } catch(e) {
+      console.warn('playDecepcao:', e);
+    }
+  }, 50);
 }
 
 
@@ -990,10 +1011,17 @@ function guess(letter, btn) {
       msg('✨ Boa! A letra <strong>' + letter + '</strong> está na palavra!');
     } else {
       wrong.add(letter);
-      playKidVoice();
+      const isFatalError = (wrong.size >= MAX_ERR);
       showErroAnim();
-      tone('bad');
-      msg('😅 A letra <strong>' + letter + '</strong> não está aqui... Tente outra vez!');
+      if (!isFatalError) {
+        // Só toca voz de criança e som de erro se NÃO for o último erro
+        // (evita sobrepor a melodia de decepção)
+        playKidVoice();
+        tone('bad');
+        msg('😅 A letra <strong>' + letter + '</strong> não está aqui... Tente outra vez!');
+      } else {
+        msg('😢 Que pena! A palavra era <strong>' + word + '</strong>.');
+      }
     }
     renderWord(); renderUsed(); stats(); hangman(); check();
   } catch(e) {
