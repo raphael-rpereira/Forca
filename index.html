@@ -967,36 +967,33 @@ function playHinoBahia() {
 // sons não interfira.
 function playDecepcao() {
   if (!soundOn) return;
-  // Pequeno delay para deixar tone('bad') e playKidVoice terminarem
-  setTimeout(() => {
-    try {
-      const audio = document.getElementById('loseAudio');
-      if (!audio) {
-        console.warn('loseAudio element not found');
-        return;
-      }
-      // Para o áudio de vitória se estiver tocando
-      const winAudio = document.getElementById('winAudio');
-      if (winAudio) { try { winAudio.pause(); winAudio.currentTime = 0; } catch(e){} }
+  try {
+    const audio = document.getElementById('loseAudio');
+    if (!audio) { console.warn('loseAudio element not found'); return; }
 
-      audio.pause();
-      audio.currentTime = 0;
-      audio.volume = 0.9;
-      audio.muted = false;
+    // Para qualquer outro som
+    const winAudio = document.getElementById('winAudio');
+    if (winAudio) { try { winAudio.pause(); winAudio.currentTime = 0; } catch(e){} }
 
-      const p = audio.play();
-      if (p && p.then) {
-        p.then(() => console.log('decepcao playing'))
-         .catch(err => {
-           console.warn('decepcao play error:', err);
-           // Tentar de novo após interação
-           setTimeout(() => { try { audio.play(); } catch(e){} }, 50);
-         });
-      }
-    } catch(e) {
-      console.warn('playDecepcao:', e);
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = 0.9;
+    audio.muted = false;
+
+    const p = audio.play();
+    if (p && p.catch) {
+      p.catch(err => {
+        console.warn('decepcao play error (1ª tentativa):', err);
+        // Fallback: tentar tocar novamente após pequeno delay
+        setTimeout(() => {
+          try { audio.currentTime = 0; audio.play(); }
+          catch(e) { console.warn('decepcao retry falhou:', e); }
+        }, 100);
+      });
     }
-  }, 50);
+  } catch(e) {
+    console.warn('playDecepcao:', e);
+  }
 }
 
 
@@ -1039,8 +1036,9 @@ function check() {
     return;
   }
   if(wrong.size>=MAX_ERR){
-    gameOn=false; disableAll(); revealAll(); stopBg();
+    // Tocar melodia PRIMEIRO, ainda dentro do user gesture do clique
     playDecepcao();                          // 🎵 melodia de decepção
+    gameOn=false; disableAll(); revealAll(); stopBg();
     setTimeout(()=>showFim(false), 1800);   // espera melodia tocar antes do modal
   }
 }
