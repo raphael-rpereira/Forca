@@ -760,6 +760,7 @@ function hangman() {
 
 function disableAll() { document.querySelectorAll('.letter-btn').forEach(b=>b.disabled=true); }
 
+function msg(t){ if(messageBox) messageBox.innerHTML = t; }
 function solved() {
   for(let i=0;i<normWord.length;i++){
     const c=normWord[i];
@@ -768,40 +769,118 @@ function solved() {
   return true;
 }
 
-function msg(t){ messageBox.innerHTML=t; }
+// ════════════════════════════════════════════════════════════
+// SISTEMA DE ÁUDIO — AudioContext global único
+//
+// PROBLEMA RAIZ: cada new AudioContext() começa suspended no iOS/Chrome.
+// O tone() funcionava porque usava osc.start(currentTime=0) e o som
+// tocava ao ser resumed. O hino agendava notas em T0+offset, mas
+// quando o resume acontecia, currentTime avançava e as notas ficavam
+// no passado — silêncio total.
+//
+// SOLUÇÃO DEFINITIVA: um único AudioContext criado e resumido no
+// PRIMEIRO clique do usuário. Após isso fica em estado "running"
+// para sempre. Todos os sons reutilizam este mesmo contexto.
+// ════════════════════════════════════════════════════════════
+let gCtx = null;
 
-// ── Web Audio: efeitos (good/bad/win/lose) ───────────────────
-function tone(type='click') {
-  if(!soundOn) return;
-  const ACtx=window.AudioContext||window.webkitAudioContext; if(!ACtx) return;
-  const ctx=new ACtx(), osc=ctx.createOscillator(), g=ctx.createGain();
+function getCtx() {
+  if (!gCtx || gCtx.state === 'closed') {
+    const ACtx = window.AudioContext || window.webkitAudioContext;
+    if (!ACtx) return null;
+    gCtx = new ACtx();
+  }
+  // Se suspended, resume sincronicamente (o clique do usuário permite isso)
+  if (gCtx.state === 'suspended') gCtx.resume();
+  return gCtx;
+}
+
+// Inicializar o contexto no PRIMEIRO toque/clique — antes de qualquer som
+function initAudio() {
+  getCtx(); // cria e resume o contexto uma vez
+}
+document.addEventListener('touchstart', initAudio, { once: true, passive: true });
+document.addEventListener('click',      initAudio, { once: true });
+
+// ── Efeitos sonoros ──────────────────────────────────────────
+function tone(type) {
+  if (!soundOn) return;
+  const ctx = getCtx(); if (!ctx) return;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const g   = ctx.createGain();
   osc.connect(g); g.connect(ctx.destination);
-  const now=ctx.currentTime;
-  ({good:[[523.25,0],[659.25,.12],[783.99,.24]],bad:[[260,0],[180,.22]],win:[[523.25,0],[659.25,.1],[783.99,.2],[1046.5,.35]],lose:[[220,0],[196,.18],[164.81,.36]],hint:[[880,0],[660,.15]],click:[[440,0]]}[type]||[[440,0]])
-    .forEach(([f,t])=>osc.frequency.linearRampToValueAtTime(f,now+t));
-  osc.type=(type==='bad'||type==='lose')?'square':'triangle';
-  g.gain.setValueAtTime(.0001,now); g.gain.linearRampToValueAtTime(.08,now+.01); g.gain.exponentialRampToValueAtTime(.0001,now+.45);
-  osc.start(now); osc.stop(now+.46);
-  osc.onended=()=>ctx.close().catch(()=>{});
+  const map = {
+    good:  [[523.25,0],[659.25,.12],[783.99,.24]],
+    bad:   [[260,0],[180,.22]],
+    win:   [[523.25,0],[659.25,.1],[783.99,.2],[1046.5,.35]],
+    lose:  [[220,0],[196,.18],[164.81,.36]],
+    hint:  [[880,0],[660,.15]],
+    click: [[440,0]]
+  };
+  (map[type] || map.click).forEach(([f,t]) =>
+    osc.frequency.linearRampToValueAtTime(f, now + t)
+  );
+  osc.type = (type === 'bad' || type === 'lose') ? 'square' : 'triangle';
+  g.gain.setValueAtTime(.0001, now);
+  g.gain.linearRampToValueAtTime(.08, now + .01);
+  g.gain.exponentialRampToValueAtTime(.0001, now + .45);
+  osc.start(now);
+  osc.stop(now + .46);
 }
 
+// ── Música de fundo ──────────────────────────────────────────
 function startBg() {
-  if(!soundOn) return;
+  if (!soundOn) return;
   stopBg();
-  const notes=[392,440,523.25,587.33,659.25]; let idx=0;
-  bgInterval=setInterval(()=>{
-    if(!soundOn) return;
-    const ACtx=window.AudioContext||window.webkitAudioContext; if(!ACtx) return;
-    const ctx=new ACtx(),osc=ctx.createOscillator(),g=ctx.createGain();
+  const notes = [392, 440, 523.25, 587.33, 659.25];
+  let idx = 0;
+  bgInterval = setInterval(() => {
+    if (!soundOn) return;
+    const ctx = getCtx(); if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g   = ctx.createGain();
     osc.connect(g); g.connect(ctx.destination);
-    const now=ctx.currentTime;
-    osc.frequency.setValueAtTime(notes[idx++%notes.length],now); osc.type='sine';
-    g.gain.setValueAtTime(.0001,now); g.gain.linearRampToValueAtTime(.016,now+.03); g.gain.exponentialRampToValueAtTime(.0001,now+.35);
-    osc.start(now); osc.stop(now+.36);
-    osc.onended=()=>ctx.close().catch(()=>{});
-  },1200);
+    osc.frequency.value = notes[idx++ % notes.length];
+    osc.type = 'sine';
+    g.gain.setValueAtTime(.0001, now);
+    g.gain.linearRampToValueAtTime(.016, now + .03);
+    g.gain.exponentialRampToValueAtTime(.0001, now + .35);
+    osc.start(now);
+    osc.stop(now + .36);
+  }, 1200);
 }
-function stopBg() { if(bgInterval){clearInterval(bgInterval);bgInterval=null;} }
+function stopBg() { if (bgInterval) { clearInterval(bgInterval); bgInterval = null; } }
+
+// ── Voz infantil (fallback Web Audio) ───────────────────────
+function _kidVoiceAudio() {
+  if (!soundOn) return;
+  const ctx = getCtx(); if (!ctx) return;
+  const sylls = [
+    [275, 0.13, 0.02],
+    [285, 0.11, 0.03],
+    [268, 0.12, 0.02],
+    [278, 0.11, 0.03],
+    [315, 0.24, 0.00],
+  ];
+  let t = ctx.currentTime + 0.05;
+  sylls.forEach(([f0, dur, gap]) => {
+    const osc  = ctx.createOscillator();
+    const filt = ctx.createBiquadFilter();
+    const env  = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(f0, t);
+    filt.type = 'bandpass'; filt.frequency.value = 1000; filt.Q.value = 1.5;
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(0.18, t + 0.012);
+    env.gain.setValueAtTime(0.16, t + dur * 0.65);
+    env.gain.linearRampToValueAtTime(0, t + dur);
+    osc.connect(filt); filt.connect(env); env.connect(ctx.destination);
+    osc.start(t); osc.stop(t + dur + 0.01);
+    t += dur + gap;
+  });
+}
 
 // ── Voz infantil masculina "Tente outra vez!" ────────────────
 // Estratégia:
@@ -856,237 +935,125 @@ function playKidVoice() {
   _kidVoiceAudio();
 }
 
-// Síntese vocal por Web Audio — soa como voz de criança
-// Usa onda sawtooth (rica em harmônicos) + 3 formantes vogais
-// + vibrato + envelope por sílaba para naturalidade
-function _kidVoiceAudio() {
+
+// ── Hino do Bahia ────────────────────────────────────────────
+// Usa o AudioContext global (já running desde o primeiro clique).
+// Completamente síncrono — sem async/await, sem resume(), sem risco
+// de timing quebrado.
+function playHinoBahia() {
   if (!soundOn) return;
   try {
-    const ACtx = window.AudioContext || window.webkitAudioContext;
-    if (!ACtx) return;
-    const ctx = new ACtx();
+    const ctx = getCtx(); if (!ctx) { tone('win'); return; }
+    // Garantia extra: se por algum motivo ainda suspended, resume e toca
+    const doPlay = () => {
+      const BPM  = 118;
+      const BEAT = 60 / BPM;
+      const T0   = ctx.currentTime + 0.08; // pequeno buffer de segurança
 
-    // Sílabas: [pitch Hz, duração s, pausa s]
-    // Pitch base ~260-300 Hz = voz infantil masculina (F0 real de menino 7 anos)
-    const sylls = [
-      [262, 0.14, 0.02],  // "Ten"
-      [278, 0.11, 0.03],  // "te"
-      [255, 0.13, 0.02],  // "ou"
-      [270, 0.11, 0.03],  // "tra"
-      [305, 0.26, 0.00],  // "vez!" — sobe para ênfase
-    ];
+      // Melodia: "Sal-ve o glo-ri-o-so | Es-por-te Clu-be Ba-hi-a..."
+      // [Hz, beats]  — 0 = silêncio
+      const MEL = [
+        [392.00, 0.25], [392.00, 0.25],
+        [523.25, 0.50],
+        [659.25, 0.50],
+        [587.33, 0.25], [523.25, 0.25],
+        [659.25, 1.00],
+        [0,      0.25],
+        [659.25, 0.25], [659.25, 0.25],
+        [783.99, 0.50],
+        [783.99, 0.25], [698.46, 0.25],
+        [659.25, 0.50],
+        [587.33, 0.50],
+        [0,      0.25],
+        [523.25, 0.25], [587.33, 0.25],
+        [659.25, 0.50],
+        [587.33, 0.25], [523.25, 0.25],
+        [392.00, 1.00],
+        [0,      0.25],
+        [440.00, 0.25], [493.88, 0.25],
+        [523.25, 0.50],
+        [659.25, 0.25], [587.33, 0.25],
+        [523.25, 2.00],
+      ];
 
-    let t = ctx.currentTime + 0.05;
+      // Harmonia (acordes)
+      const HARM = [
+        [[261.63, 329.63, 392.00], 2.00],
+        [[392.00, 493.88, 587.33], 1.50],
+        [[261.63, 329.63, 392.00], 0.50],
+        [[349.23, 440.00, 523.25], 1.00],
+        [[392.00, 493.88, 587.33], 1.00],
+        [[220.00, 261.63, 329.63], 1.00],
+        [[392.00, 493.88, 587.33], 0.75],
+        [[261.63, 329.63, 392.00], 2.00],
+      ];
 
-    sylls.forEach(([f0, dur, gap], idx) => {
-      // ── Oscilador vocal (fundamental) ──
-      const osc = ctx.createOscillator();
-      osc.type  = 'sawtooth';
-      osc.frequency.setValueAtTime(f0, t);
-      // Pequena inflexão natural no pitch
-      osc.frequency.linearRampToValueAtTime(f0 * 1.025, t + dur * 0.45);
-      osc.frequency.linearRampToValueAtTime(f0 * 0.985, t + dur);
+      // — Melodia (square + lowpass = trompete) —
+      let t = T0;
+      MEL.forEach(([freq, beats]) => {
+        const dur = beats * BEAT;
+        if (freq > 0) {
+          const osc  = ctx.createOscillator();
+          const filt = ctx.createBiquadFilter();
+          const env  = ctx.createGain();
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(freq, t);
+          filt.type = 'lowpass';
+          filt.frequency.value = freq * 4;
+          filt.Q.value = 0.8;
+          env.gain.setValueAtTime(0,    t);
+          env.gain.linearRampToValueAtTime(0.28, t + 0.015);
+          env.gain.setValueAtTime(0.24, t + dur * 0.75);
+          env.gain.linearRampToValueAtTime(0,    t + dur * 0.98);
+          osc.connect(filt); filt.connect(env); env.connect(ctx.destination);
+          osc.start(t);
+          osc.stop(t + dur);
+        }
+        t += dur;
+      });
 
-      // ── Vibrato (5.5 Hz, ±3 Hz) — naturalidade vocal ──
-      const vibOsc  = ctx.createOscillator();
-      const vibGain = ctx.createGain();
-      vibOsc.type = 'sine';
-      vibOsc.frequency.value = 5.5;
-      vibGain.gain.value = 3;
-      vibOsc.connect(vibGain);
-      vibGain.connect(osc.frequency);
+      // — Harmonia (sine suave) —
+      let th = T0;
+      HARM.forEach(([freqs, beats]) => {
+        const dur = beats * BEAT;
+        freqs.forEach(freq => {
+          const osc = ctx.createOscillator();
+          const env = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          env.gain.setValueAtTime(0,    th);
+          env.gain.linearRampToValueAtTime(0.06, th + 0.04);
+          env.gain.setValueAtTime(0.05, th + dur * 0.85);
+          env.gain.linearRampToValueAtTime(0,    th + dur * 0.98);
+          osc.connect(env); env.connect(ctx.destination);
+          osc.start(th); osc.stop(th + dur);
+        });
+        th += dur;
+      });
 
-      // ── Formante 1 — abertura oral (~800 Hz para criança) ──
-      const f1 = ctx.createBiquadFilter();
-      f1.type = 'bandpass';
-      f1.frequency.value = 800;
-      f1.Q.value = 2.0;
-
-      // ── Formante 2 — timbre/vogal (~1800 Hz) ──
-      const f2 = ctx.createBiquadFilter();
-      f2.type = 'bandpass';
-      f2.frequency.value = 1800;
-      f2.Q.value = 3.5;
-
-      // ── Formante 3 — brilho infantil (~3200 Hz) ──
-      const f3 = ctx.createBiquadFilter();
-      f3.type = 'bandpass';
-      f3.frequency.value = 3200;
-      f3.Q.value = 5.0;
-
-      // ── Ganhos de cada formante (pesos de mistura) ──
-      const gF1 = ctx.createGain(); gF1.gain.value = 1.0;
-      const gF2 = ctx.createGain(); gF2.gain.value = 0.6;
-      const gF3 = ctx.createGain(); gF3.gain.value = 0.3;
-
-      // ── Envelope de amplitude ──
-      const envGain = ctx.createGain();
-      envGain.gain.setValueAtTime(0, t);
-      envGain.gain.linearRampToValueAtTime(0.22, t + 0.018);   // attack
-      envGain.gain.setValueAtTime(0.20, t + dur * 0.70);
-      envGain.gain.linearRampToValueAtTime(0, t + dur);         // decay
-
-      // ── Cadeia de sinal ──
-      // osc → f1 → gF1 ─┐
-      //      → f2 → gF2 ─┼→ envGain → destination
-      //      → f3 → gF3 ─┘
-      osc.connect(f1); f1.connect(gF1); gF1.connect(envGain);
-      osc.connect(f2); f2.connect(gF2); gF2.connect(envGain);
-      osc.connect(f3); f3.connect(gF3); gF3.connect(envGain);
-      envGain.connect(ctx.destination);
-
-      osc.start(t);    vibOsc.start(t);
-      osc.stop(t + dur + 0.02);
-      vibOsc.stop(t + dur + 0.02);
-
-      // Fechar contexto só após última sílaba
-      if (idx === sylls.length - 1) {
-        osc.onended = () => {
-          setTimeout(() => { try { ctx.close(); } catch(e){} }, 400);
-        };
-      }
-
-      t += dur + gap;
-    });
-  } catch(e) {
-    // Nunca bloqueia o jogo
-  }
-}
-
-// ── Hino do Esporte Clube Bahia — introdução ─────────────────
-// Melodia: "Salve o glorioso Esporte Clube Bahia"
-// Tom: Dó maior, 2/4, ~118 BPM
-// CORREÇÃO: ctx.resume() garante que o AudioContext não fica suspended
-async function playHinoBahia() {
-  if (!soundOn) return;
-  try {
-    const ACtx = window.AudioContext || window.webkitAudioContext;
-    if (!ACtx) { tone('win'); return; }
-
-    const ctx = new ACtx();
-
-    // ESSENCIAL: resume o contexto antes de agendar qualquer nota
-    // (iOS Safari e Chrome criam AudioContext em estado "suspended")
-    await ctx.resume();
-
-    const BPM  = 118;
-    const BEAT = 60 / BPM;  // 0.508s por beat
-
-    // ── Melodia: "Sal-ve o glo-ri-o-so | Es-por-te Clu-be Ba-hi-a..." ──
-    // [frequência Hz, duração em beats]  — 0 Hz = silêncio
-    const MEL = [
-      [392.00, 0.25], [392.00, 0.25],   // Sol Sol
-      [523.25, 0.50],                    // Dó
-      [659.25, 0.50],                    // Mi
-      [587.33, 0.25], [523.25, 0.25],   // Ré Dó
-      [659.25, 1.00],                    // Mi (longa)
-      [0,      0.25],                    // rest
-      [659.25, 0.25], [659.25, 0.25],   // Mi Mi
-      [783.99, 0.50],                    // Sol
-      [783.99, 0.25], [698.46, 0.25],   // Sol Fá
-      [659.25, 0.50],                    // Mi
-      [587.33, 0.50],                    // Ré
-      [0,      0.25],                    // rest
-      [523.25, 0.25], [587.33, 0.25],   // Dó Ré
-      [659.25, 0.50],                    // Mi
-      [587.33, 0.25], [523.25, 0.25],   // Ré Dó
-      [392.00, 1.00],                    // Sol (longa)
-      [0,      0.25],                    // rest
-      [440.00, 0.25], [493.88, 0.25],   // Lá Si
-      [523.25, 0.50],                    // Dó
-      [659.25, 0.25], [587.33, 0.25],   // Mi Ré
-      [523.25, 2.00],                    // Dó final
-    ];
-
-    // ── Harmonia de fundo (acordes em sine suave) ──
-    const HARM = [
-      [[261.63, 329.63, 392.00], 2.00],  // Dó maior
-      [[392.00, 493.88, 587.33], 1.50],  // Sol maior
-      [[261.63, 329.63, 392.00], 0.50],  // Dó maior
-      [[349.23, 440.00, 523.25], 1.00],  // Fá maior
-      [[392.00, 493.88, 587.33], 1.00],  // Sol maior
-      [[220.00, 261.63, 329.63], 1.00],  // Lá menor
-      [[392.00, 493.88, 587.33], 0.75],  // Sol maior
-      [[261.63, 329.63, 392.00], 2.00],  // Dó maior (final)
-    ];
-
-    // Ponto de partida no tempo do contexto (já resumido)
-    const T0 = ctx.currentTime + 0.05;
-
-    // ── Melodia: timbre de trompete (square + lowpass) ──
-    let t = T0;
-    MEL.forEach(([freq, beats]) => {
-      const dur = beats * BEAT;
-      if (freq > 0) {
-        const osc  = ctx.createOscillator();
-        const filt = ctx.createBiquadFilter();
-        const env  = ctx.createGain();
-
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(freq, t);
-
-        filt.type = 'lowpass';
-        filt.frequency.value = freq * 4;
-        filt.Q.value = 0.8;
-
-        env.gain.setValueAtTime(0,    t);
-        env.gain.linearRampToValueAtTime(0.28, t + 0.015);
-        env.gain.setValueAtTime(0.24, t + dur * 0.75);
-        env.gain.linearRampToValueAtTime(0,    t + dur * 0.98);
-
-        osc.connect(filt);
-        filt.connect(env);
-        env.connect(ctx.destination);
-        osc.start(t);
-        osc.stop(t + dur);
-      }
-      t += dur;
-    });
-
-    // ── Harmonia: acordes sine ──
-    let th = T0;
-    HARM.forEach(([freqs, beats]) => {
-      const dur = beats * BEAT;
-      freqs.forEach(freq => {
+      // — Bumbo a cada 2 beats —
+      const totalBeats = MEL.reduce((s, [,b]) => s + b, 0);
+      for (let k = 0; k < Math.floor(totalBeats / 2); k++) {
+        const tk = T0 + k * 2 * BEAT;
         const osc = ctx.createOscillator();
         const env = ctx.createGain();
         osc.type = 'sine';
-        osc.frequency.value = freq;
-        env.gain.setValueAtTime(0,    th);
-        env.gain.linearRampToValueAtTime(0.06, th + 0.04);
-        env.gain.setValueAtTime(0.05, th + dur * 0.85);
-        env.gain.linearRampToValueAtTime(0,    th + dur * 0.98);
-        osc.connect(env);
-        env.connect(ctx.destination);
-        osc.start(th);
-        osc.stop(th + dur);
-      });
-      th += dur;
-    });
+        osc.frequency.setValueAtTime(110, tk);
+        osc.frequency.exponentialRampToValueAtTime(35, tk + 0.10);
+        env.gain.setValueAtTime(0.45, tk);
+        env.gain.exponentialRampToValueAtTime(0.001, tk + 0.18);
+        osc.connect(env); env.connect(ctx.destination);
+        osc.start(tk); osc.stop(tk + 0.20);
+      }
+    };
 
-    // ── Bumbo a cada 2 beats ──
-    const totalBeats = MEL.reduce((s, [,b]) => s + b, 0);
-    for (let k = 0; k < Math.floor(totalBeats / 2); k++) {
-      const tk = T0 + k * 2 * BEAT;
-      const osc = ctx.createOscillator();
-      const env = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(110, tk);
-      osc.frequency.exponentialRampToValueAtTime(35, tk + 0.10);
-      env.gain.setValueAtTime(0.45, tk);
-      env.gain.exponentialRampToValueAtTime(0.001, tk + 0.18);
-      osc.connect(env);
-      env.connect(ctx.destination);
-      osc.start(tk);
-      osc.stop(tk + 0.20);
+    if (ctx.state === 'running') {
+      doPlay();
+    } else {
+      ctx.resume().then(doPlay).catch(() => tone('win'));
     }
-
-    // Fechar o contexto após o hino completo
-    const totalSec = totalBeats * BEAT;
-    setTimeout(() => ctx.close().catch(() => {}), (totalSec + 0.8) * 1000);
-
   } catch(e) {
-    console.warn('playHinoBahia error:', e);
+    console.warn('hino error:', e);
     tone('win');
   }
 }
