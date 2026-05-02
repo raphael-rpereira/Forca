@@ -953,6 +953,144 @@ function _kidVoiceAudio() {
   }
 }
 
+// ── Hino do Esporte Clube Bahia — introdução ─────────────────
+// Melodia: "Salve o glorioso Esporte Clube Bahia"
+// Tom: Dó maior, 2/4, ~118 BPM
+// CORREÇÃO: ctx.resume() garante que o AudioContext não fica suspended
+async function playHinoBahia() {
+  if (!soundOn) return;
+  try {
+    const ACtx = window.AudioContext || window.webkitAudioContext;
+    if (!ACtx) { tone('win'); return; }
+
+    const ctx = new ACtx();
+
+    // ESSENCIAL: resume o contexto antes de agendar qualquer nota
+    // (iOS Safari e Chrome criam AudioContext em estado "suspended")
+    await ctx.resume();
+
+    const BPM  = 118;
+    const BEAT = 60 / BPM;  // 0.508s por beat
+
+    // ── Melodia: "Sal-ve o glo-ri-o-so | Es-por-te Clu-be Ba-hi-a..." ──
+    // [frequência Hz, duração em beats]  — 0 Hz = silêncio
+    const MEL = [
+      [392.00, 0.25], [392.00, 0.25],   // Sol Sol
+      [523.25, 0.50],                    // Dó
+      [659.25, 0.50],                    // Mi
+      [587.33, 0.25], [523.25, 0.25],   // Ré Dó
+      [659.25, 1.00],                    // Mi (longa)
+      [0,      0.25],                    // rest
+      [659.25, 0.25], [659.25, 0.25],   // Mi Mi
+      [783.99, 0.50],                    // Sol
+      [783.99, 0.25], [698.46, 0.25],   // Sol Fá
+      [659.25, 0.50],                    // Mi
+      [587.33, 0.50],                    // Ré
+      [0,      0.25],                    // rest
+      [523.25, 0.25], [587.33, 0.25],   // Dó Ré
+      [659.25, 0.50],                    // Mi
+      [587.33, 0.25], [523.25, 0.25],   // Ré Dó
+      [392.00, 1.00],                    // Sol (longa)
+      [0,      0.25],                    // rest
+      [440.00, 0.25], [493.88, 0.25],   // Lá Si
+      [523.25, 0.50],                    // Dó
+      [659.25, 0.25], [587.33, 0.25],   // Mi Ré
+      [523.25, 2.00],                    // Dó final
+    ];
+
+    // ── Harmonia de fundo (acordes em sine suave) ──
+    const HARM = [
+      [[261.63, 329.63, 392.00], 2.00],  // Dó maior
+      [[392.00, 493.88, 587.33], 1.50],  // Sol maior
+      [[261.63, 329.63, 392.00], 0.50],  // Dó maior
+      [[349.23, 440.00, 523.25], 1.00],  // Fá maior
+      [[392.00, 493.88, 587.33], 1.00],  // Sol maior
+      [[220.00, 261.63, 329.63], 1.00],  // Lá menor
+      [[392.00, 493.88, 587.33], 0.75],  // Sol maior
+      [[261.63, 329.63, 392.00], 2.00],  // Dó maior (final)
+    ];
+
+    // Ponto de partida no tempo do contexto (já resumido)
+    const T0 = ctx.currentTime + 0.05;
+
+    // ── Melodia: timbre de trompete (square + lowpass) ──
+    let t = T0;
+    MEL.forEach(([freq, beats]) => {
+      const dur = beats * BEAT;
+      if (freq > 0) {
+        const osc  = ctx.createOscillator();
+        const filt = ctx.createBiquadFilter();
+        const env  = ctx.createGain();
+
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(freq, t);
+
+        filt.type = 'lowpass';
+        filt.frequency.value = freq * 4;
+        filt.Q.value = 0.8;
+
+        env.gain.setValueAtTime(0,    t);
+        env.gain.linearRampToValueAtTime(0.28, t + 0.015);
+        env.gain.setValueAtTime(0.24, t + dur * 0.75);
+        env.gain.linearRampToValueAtTime(0,    t + dur * 0.98);
+
+        osc.connect(filt);
+        filt.connect(env);
+        env.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + dur);
+      }
+      t += dur;
+    });
+
+    // ── Harmonia: acordes sine ──
+    let th = T0;
+    HARM.forEach(([freqs, beats]) => {
+      const dur = beats * BEAT;
+      freqs.forEach(freq => {
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        env.gain.setValueAtTime(0,    th);
+        env.gain.linearRampToValueAtTime(0.06, th + 0.04);
+        env.gain.setValueAtTime(0.05, th + dur * 0.85);
+        env.gain.linearRampToValueAtTime(0,    th + dur * 0.98);
+        osc.connect(env);
+        env.connect(ctx.destination);
+        osc.start(th);
+        osc.stop(th + dur);
+      });
+      th += dur;
+    });
+
+    // ── Bumbo a cada 2 beats ──
+    const totalBeats = MEL.reduce((s, [,b]) => s + b, 0);
+    for (let k = 0; k < Math.floor(totalBeats / 2); k++) {
+      const tk = T0 + k * 2 * BEAT;
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(110, tk);
+      osc.frequency.exponentialRampToValueAtTime(35, tk + 0.10);
+      env.gain.setValueAtTime(0.45, tk);
+      env.gain.exponentialRampToValueAtTime(0.001, tk + 0.18);
+      osc.connect(env);
+      env.connect(ctx.destination);
+      osc.start(tk);
+      osc.stop(tk + 0.20);
+    }
+
+    // Fechar o contexto após o hino completo
+    const totalSec = totalBeats * BEAT;
+    setTimeout(() => ctx.close().catch(() => {}), (totalSec + 0.8) * 1000);
+
+  } catch(e) {
+    console.warn('playHinoBahia error:', e);
+    tone('win');
+  }
+}
+
 // ── Lógica do jogo ───────────────────────────────────────────
 function guess(letter, btn) {
   if(!gameOn||guessed.has(letter)||wrong.has(letter)) return;
@@ -980,8 +1118,8 @@ function revealAll() { for(const c of uniq(normWord)) guessed.add(c); renderWord
 function check() {
   if(solved()){
     gameOn=false; disableAll(); stopBg();
-    tone('win');
-    setTimeout(()=>showFim(true), 600);
+    playHinoBahia();                        // 🎵 hino do Bahia!
+    setTimeout(()=>showFim(true), 800);
     return;
   }
   if(wrong.size>=MAX_ERR){
