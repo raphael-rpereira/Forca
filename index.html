@@ -1017,7 +1017,7 @@ function guess(letter, btn) {
         tone('bad');
         msg('😅 A letra <strong>' + letter + '</strong> não está aqui... Tente outra vez!');
       } else {
-        msg('😢 Que pena! A palavra era <strong>' + word + '</strong>.');
+        msg('😢 Que pena! A palavra era <strong>' + secretWord + '</strong>.');
       }
     }
     renderWord(); renderUsed(); stats(); hangman(); check();
